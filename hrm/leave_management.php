@@ -90,15 +90,57 @@ function calculateBusinessDays($startDate, $endDate, $conn, $includeWeekends = f
             continue;
         }
 
-        // Skip holidays
-        if (!in_array($currentDate, $holidays)) {
-            $days++;
+        // Skip holidays if not including weekends (for most leave types except maternity)
+        if (!$includeWeekends && in_array($currentDate, $holidays)) {
+            $current->add(new DateInterval('P1D'));
+            continue;
         }
 
+        $days++;
         $current->add(new DateInterval('P1D'));
     }
 
     return $days;
+}
+
+/**
+ * Calculate leave days based on leave type settings
+ * This function considers whether weekends and holidays should be counted based on leave type
+ */
+function calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn) {
+    // Get leave type settings
+    $leaveTypeQuery = "SELECT counts_weekends FROM leave_types WHERE id = ?";
+    $stmt = $conn->prepare($leaveTypeQuery);
+    $stmt->bind_param("i", $leaveTypeId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($leaveType = $result->fetch_assoc()) {
+        $countsWeekends = (bool)$leaveType['counts_weekends'];
+        
+        // If leave type counts weekends (like maternity leave), include weekends and holidays
+        if ($countsWeekends) {
+            return calculateCalendarDays($startDate, $endDate);
+        } else {
+            // For other leave types, exclude weekends and holidays
+            return calculateBusinessDays($startDate, $endDate, $conn, false);
+        }
+    }
+    
+    // Default to business days if leave type not found
+    return calculateBusinessDays($startDate, $endDate, $conn, false);
+}
+
+/**
+ * Calculate calendar days (including weekends and holidays)
+ * Used for leave types like maternity leave
+ */
+function calculateCalendarDays($startDate, $endDate) {
+    $start = new DateTime($startDate);
+    $end = new DateTime($endDate);
+    
+    $interval = $start->diff($end);
+    return $interval->days + 1; // +1 to include both start and end dates
 }
 
 function getLeaveTypeBalance($employeeId, $leaveTypeId, $conn) {
@@ -192,8 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $emergencyContact = sanitizeInput($_POST['emergency_contact']);
             $emergencyPhone = sanitizeInput($_POST['emergency_phone']);
 
-            // Calculate days
-            $days = calculateBusinessDays($startDate, $endDate, $conn);
+            // Calculate days based on leave type (excludes weekends/holidays except for maternity leave)
+            $days = calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn);
 
             // Check balance
             $balance = getLeaveTypeBalance($employeeId, $leaveTypeId, $conn);
@@ -663,11 +705,16 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                 <select name="leave_type_id" id="leave_type_id" class="form-control" required>
                                     <option value="">Select Leave Type</option>
                                     <?php foreach ($leaveTypes as $type): ?>
-                                    <option value="<?php echo $type['id']; ?>">
+                                    <option value="<?php echo $type['id']; ?>" 
+                                            data-counts-weekends="<?php echo $type['counts_weekends']; ?>"
+                                            data-description="<?php echo htmlspecialchars($type['description']); ?>">
                                         <?php echo htmlspecialchars($type['name']); ?>
                                     </option>
                                     <?php endforeach; ?>
                                 </select>
+                                <div id="leave_type_info" class="alert alert-info" style="margin-top: 10px; display: none;">
+                                    <small id="leave_type_description"></small>
+                                </div>
                             </div>
 
                             <div class="form-group">
@@ -1207,14 +1254,36 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
 
             if (startDateInput && endDateInput && calculatedDays) {
                 function calculateDays() {
-                    if (startDateInput.value && endDateInput.value) {
+                    const leaveTypeSelect = document.getElementById('leave_type_id');
+                    
+                    if (startDateInput.value && endDateInput.value && leaveTypeSelect.value) {
                         const start = new Date(startDateInput.value);
                         const end = new Date(endDateInput.value);
 
                         if (end >= start) {
-                            const diffTime = Math.abs(end - start);
-                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Include both start and end days
-                            calculatedDays.value = diffDays + ' days';
+                            // Make AJAX call to calculate days based on leave type
+                            fetch('calculate_leave_days.php', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                },
+                                body: `start_date=${startDateInput.value}&end_date=${endDateInput.value}&leave_type_id=${leaveTypeSelect.value}`
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    calculatedDays.value = data.days + ' days';
+                                    if (data.note) {
+                                        calculatedDays.value += ' (' + data.note + ')';
+                                    }
+                                } else {
+                                    calculatedDays.value = 'Error calculating days';
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error:', error);
+                                calculatedDays.value = 'Error calculating days';
+                            });
                         } else {
                             calculatedDays.value = 'Invalid date range';
                         }
@@ -1225,6 +1294,36 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
 
                 startDateInput.addEventListener('change', calculateDays);
                 endDateInput.addEventListener('change', calculateDays);
+                
+                // Also recalculate when leave type changes
+                const leaveTypeSelect = document.getElementById('leave_type_id');
+                const leaveTypeInfo = document.getElementById('leave_type_info');
+                const leaveTypeDescription = document.getElementById('leave_type_description');
+                
+                if (leaveTypeSelect) {
+                    leaveTypeSelect.addEventListener('change', function() {
+                        calculateDays();
+                        
+                        // Show leave type information
+                        const selectedOption = leaveTypeSelect.options[leaveTypeSelect.selectedIndex];
+                        if (selectedOption.value) {
+                            const countsWeekends = selectedOption.getAttribute('data-counts-weekends') === '1';
+                            const description = selectedOption.getAttribute('data-description');
+                            
+                            let infoText = description;
+                            if (countsWeekends) {
+                                infoText += ' • <strong>Note:</strong> This leave type includes weekends and holidays in the calculation.';
+                            } else {
+                                infoText += ' • <strong>Note:</strong> This leave type excludes weekends and holidays from the calculation.';
+                            }
+                            
+                            leaveTypeDescription.innerHTML = infoText;
+                            leaveTypeInfo.style.display = 'block';
+                        } else {
+                            leaveTypeInfo.style.display = 'none';
+                        }
+                    });
+                }
             }
 
             // Set minimum date to today for leave applications
