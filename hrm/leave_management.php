@@ -141,6 +141,107 @@ if (isset($_GET['test']) && $_GET['test'] === 'hierarchical_approval') {
     exit();
 }
 
+// Handle test request for AJAX calculation
+if (isset($_GET['test']) && $_GET['test'] === 'ajax_calc') {
+    require_once 'config.php';
+    
+    echo "<h2>AJAX Leave Calculation Test</h2>";
+    echo "<pre>";
+    
+    try {
+        $conn = getConnection();
+        
+        // Test with sample data
+        $testData = [
+            'start_date' => '2025-01-20',
+            'end_date' => '2025-01-22',
+            'leave_type_id' => 1
+        ];
+        
+        echo "Testing with:\n";
+        echo "Start Date: {$testData['start_date']}\n";
+        echo "End Date: {$testData['end_date']}\n";
+        echo "Leave Type ID: {$testData['leave_type_id']}\n\n";
+        
+        // Check if leave type exists
+        $checkQuery = "SELECT id, name FROM leave_types WHERE id = ?";
+        $stmt = $conn->prepare($checkQuery);
+        $stmt->bind_param("i", $testData['leave_type_id']);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($leaveType = $result->fetch_assoc()) {
+            echo "Leave Type Found: {$leaveType['name']}\n\n";
+            
+            // Test the calculation
+            $calcResult = calculateLeaveDays($testData['start_date'], $testData['end_date'], $testData['leave_type_id'], $conn);
+            
+            echo "Calculation Result:\n";
+            echo "Days: {$calcResult['days']}\n";
+            echo "Note: {$calcResult['note']}\n";
+            echo "Leave Type: {$calcResult['leave_type']}\n";
+            
+        } else {
+            echo "Leave Type ID {$testData['leave_type_id']} not found!\n";
+            
+            // Show available leave types
+            $allTypes = $conn->query("SELECT id, name FROM leave_types LIMIT 5");
+            echo "\nAvailable Leave Types:\n";
+            while ($row = $allTypes->fetch_assoc()) {
+                echo "ID: {$row['id']}, Name: {$row['name']}\n";
+            }
+        }
+        
+        $conn->close();
+        echo "\nTest completed successfully!";
+        
+    } catch (Exception $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    
+    echo "</pre>";
+    echo '<p><a href="leave_management.php">Back to Leave Management</a></p>';
+    echo '<p><a href="leave_management.php?test=db_structure">Test DB Structure</a></p>';
+    exit();
+}
+
+// Handle test request for database structure
+if (isset($_GET['test']) && $_GET['test'] === 'db_structure') {
+    require_once 'config.php';
+    
+    echo "<h2>Database Structure Test</h2>";
+    echo "<pre>";
+    
+    try {
+        $conn = getConnection();
+        
+        // Check leave_types table structure
+        $result = $conn->query("DESCRIBE leave_types");
+        echo "=== LEAVE_TYPES TABLE STRUCTURE ===\n";
+        while ($row = $result->fetch_assoc()) {
+            echo "Field: {$row['Field']}, Type: {$row['Type']}, Null: {$row['Null']}, Default: {$row['Default']}\n";
+        }
+        
+        // Check if we have any leave types
+        $result = $conn->query("SELECT id, name, counts_weekends FROM leave_types LIMIT 5");
+        echo "\n=== SAMPLE LEAVE TYPES ===\n";
+        while ($row = $result->fetch_assoc()) {
+            echo "ID: {$row['id']}, Name: {$row['name']}, Counts Weekends: " . ($row['counts_weekends'] ?? 'NULL') . "\n";
+        }
+        
+        $conn->close();
+        echo "\nTest completed successfully!";
+        
+    } catch (Exception $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    
+    echo "</pre>";
+    echo '<p><a href="leave_management.php">Back to Leave Management</a></p>';
+    echo '<p><a href="leave_management.php?test=leave_calculation">Test Leave Calculation</a></p>';
+    exit();
+}
+
 // Handle test request for leave days calculation
 if (isset($_GET['test']) && $_GET['test'] === 'leave_calculation') {
     require_once 'config.php';
@@ -226,8 +327,12 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'calculate_days') {
             $endDate = sanitizeInput($_POST['end_date'] ?? '');
             $leaveTypeId = (int)($_POST['leave_type_id'] ?? 0);
             
+            // Debug logging
+            error_log("AJAX Leave Calculation - Start: $startDate, End: $endDate, Type: $leaveTypeId");
+            
             // Validate inputs
             if (empty($startDate) || empty($endDate) || $leaveTypeId <= 0) {
+                error_log("AJAX Leave Calculation - Invalid inputs");
                 echo json_encode(['success' => false, 'error' => 'Invalid input parameters']);
                 exit();
             }
@@ -264,7 +369,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'calculate_days') {
             ]);
             
         } catch (Exception $e) {
-            echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
+            error_log("Leave calculation error: " . $e->getMessage());
+            echo json_encode(['success' => false, 'error' => 'Error calculating days: ' . $e->getMessage()]);
         }
     } else {
         echo json_encode(['success' => false, 'error' => 'Invalid request method']);
@@ -328,16 +434,21 @@ function getFlashMessage() {
 
 // Helper functions for leave management
 function calculateBusinessDays($startDate, $endDate, $conn, $includeWeekends = false) {
-    $start = new DateTime($startDate);
-    $end = new DateTime($endDate);
-    $days = 0;
+    try {
+        $start = new DateTime($startDate);
+        $end = new DateTime($endDate);
+        $days = 0;
 
-    // Get holidays from database
-    $holidayQuery = "SELECT date FROM holidays WHERE date BETWEEN ? AND ?";
-    $stmt = $conn->prepare($holidayQuery);
-    $stmt->bind_param("ss", $startDate, $endDate);
-    $stmt->execute();
-    $result = $stmt->get_result();
+        // Get holidays from database
+        $holidayQuery = "SELECT date FROM holidays WHERE date BETWEEN ? AND ?";
+        $stmt = $conn->prepare($holidayQuery);
+        if (!$stmt) {
+            throw new Exception("Database prepare error: " . $conn->error);
+        }
+        
+        $stmt->bind_param("ss", $startDate, $endDate);
+        $stmt->execute();
+        $result = $stmt->get_result();
 
     $holidays = [];
     while ($row = $result->fetch_assoc()) {
@@ -366,6 +477,10 @@ function calculateBusinessDays($startDate, $endDate, $conn, $includeWeekends = f
     }
 
     return $days;
+    
+    } catch (Exception $e) {
+        throw new Exception("Error calculating business days: " . $e->getMessage());
+    }
 }
 
 /**
@@ -373,27 +488,78 @@ function calculateBusinessDays($startDate, $endDate, $conn, $includeWeekends = f
  * This function considers whether weekends and holidays should be counted based on leave type
  */
 function calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn) {
-    // Get leave type settings
-    $leaveTypeQuery = "SELECT counts_weekends FROM leave_types WHERE id = ?";
+    // Validate inputs
+    if (empty($startDate) || empty($endDate) || $leaveTypeId <= 0) {
+        throw new Exception("Invalid parameters for leave calculation");
+    }
+    
+    // Validate date format
+    $start = DateTime::createFromFormat('Y-m-d', $startDate);
+    $end = DateTime::createFromFormat('Y-m-d', $endDate);
+    
+    if (!$start || !$end) {
+        throw new Exception("Invalid date format");
+    }
+    
+    if ($end < $start) {
+        throw new Exception("End date must be after start date");
+    }
+    
+    // Get leave type settings - first try with counts_weekends, fallback without it
+    $leaveTypeQuery = "SELECT name FROM leave_types WHERE id = ?";
+    
+    // Check if counts_weekends column exists
+    $columnCheck = $conn->query("SHOW COLUMNS FROM leave_types LIKE 'counts_weekends'");
+    $hasCountsWeekends = ($columnCheck && $columnCheck->num_rows > 0);
+    
+    if ($hasCountsWeekends) {
+        $leaveTypeQuery = "SELECT name, counts_weekends FROM leave_types WHERE id = ?";
+    }
+    
     $stmt = $conn->prepare($leaveTypeQuery);
+    if (!$stmt) {
+        throw new Exception("Database prepare error: " . $conn->error);
+    }
+    
     $stmt->bind_param("i", $leaveTypeId);
     $stmt->execute();
     $result = $stmt->get_result();
     
     if ($leaveType = $result->fetch_assoc()) {
-        $countsWeekends = (bool)$leaveType['counts_weekends'];
+        $leaveTypeName = $leaveType['name'];
+        
+        // Determine if weekends should be counted
+        if ($hasCountsWeekends) {
+            $countsWeekends = (bool)($leaveType['counts_weekends'] ?? 0);
+        } else {
+            // Fallback: assume maternity leave counts weekends, others don't
+            $countsWeekends = (stripos($leaveTypeName, 'maternity') !== false);
+        }
         
         // If leave type counts weekends (like maternity leave), include weekends and holidays
         if ($countsWeekends) {
-            return calculateCalendarDays($startDate, $endDate);
+            $days = calculateCalendarDays($startDate, $endDate);
+            $note = "Includes weekends and holidays";
         } else {
             // For other leave types, exclude weekends and holidays
-            return calculateBusinessDays($startDate, $endDate, $conn, false);
+            $days = calculateBusinessDays($startDate, $endDate, $conn, false);
+            $note = "Excludes weekends and holidays";
         }
+        
+        return [
+            'days' => $days,
+            'note' => $note,
+            'leave_type' => $leaveTypeName
+        ];
     }
     
     // Default to business days if leave type not found
-    return calculateBusinessDays($startDate, $endDate, $conn, false);
+    $days = calculateBusinessDays($startDate, $endDate, $conn, false);
+    return [
+        'days' => $days,
+        'note' => "Excludes weekends and holidays (default)",
+        'leave_type' => "Unknown"
+    ];
 }
 
 /**
@@ -603,7 +769,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $emergencyPhone = sanitizeInput($_POST['emergency_phone']);
 
             // Calculate days based on leave type (excludes weekends/holidays except for maternity leave)
-            $days = calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn);
+            $leaveCalculation = calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn);
+            $days = $leaveCalculation['days'];
 
             // Check balance
             $balance = getLeaveTypeBalance($employeeId, $leaveTypeId, $conn);
