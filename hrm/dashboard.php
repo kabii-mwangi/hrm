@@ -155,6 +155,9 @@ $conn->close();
                     <?php if (hasPermission('hr_manager')|| hasPermission('super_admin')||hasPermission('dept_head')||hasPermission('officer')): ?>
                     <li><a href="leave_management.php">Leave Management</a></li>
                     <?php endif; ?>
+                    <?php if (hasPermission('hr_manager') || hasPermission('super_admin')): ?>
+                    <li><a href="annual_leave_management.php">Annual Leave Awards</a></li>
+                    <?php endif; ?>
                 </ul>
             </nav>
         </div>
