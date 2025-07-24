@@ -310,7 +310,7 @@ function hasPermission($required_role) {
         'employee' => 0
     ];
 
-    $user_level = $role_hierarchy[$user['role']] ?? 0;
+    $user_level = $role_hierarchy[$user['role'] ?? 'employee'] ?? 0;
     $required_level = $role_hierarchy[$required_role] ?? 0;
 
     return $user_level >= $required_level;
@@ -1084,18 +1084,18 @@ try {
     $leaveTypes = $leaveTypesResult->fetch_all(MYSQLI_ASSOC);
 
     // Get employees (for managers)
-if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
+    if (in_array($user['role'] ?? '', ['hr_manager', 'dept_head', 'section_head'])) {
     $employeesQuery = "SELECT e.*, d.name as department_name, s.name as section_name 
                       FROM employees e 
                       LEFT JOIN departments d ON e.department_id = d.id 
                       LEFT JOIN sections s ON e.section_id = s.id";
     
     // Add role-specific filtering
-    if ($user['role'] === 'dept_head') {
-        $employeesQuery .= " WHERE e.department_id = " . (int)$userEmployee['department_id'];
+    if (isset($user['role']) && $user['role'] === 'dept_head') {
+        $employeesQuery .= " WHERE e.department_id = " . (int)($userEmployee['department_id'] ?? 0);
     } 
-    elseif ($user['role'] === 'section_head') {
-        $employeesQuery .= " WHERE e.section_id = " . (int)$userEmployee['section_id'];
+    elseif (isset($user['role']) && $user['role'] === 'section_head') {
+        $employeesQuery .= " WHERE e.section_id = " . (int)($userEmployee['section_id'] ?? 0);
     }
     
     $employeesQuery .= " ORDER BY e.first_name, e.last_name";
@@ -1234,7 +1234,7 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                    LEFT JOIN users u ON la.approver_id = u.id
                                    WHERE la.employee_id = ?
                                    ORDER BY la.applied_at DESC");
-            $stmt->bind_param("i", $userEmployee['id']);
+            $stmt->bind_param("i", $userEmployee['id'] ?? 0);
             $stmt->execute();
             $leaveApplications = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         }
@@ -1247,7 +1247,7 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                JOIN leave_types lt ON lb.leave_type_id = lt.id
                                WHERE lb.employee_id = ?
                                ORDER BY lt.name");
-        $stmt->bind_param("i", $userEmployee['id']);
+        $stmt->bind_param("i", $userEmployee['id'] ?? 0);
         $stmt->execute();
         $leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     }
@@ -1346,24 +1346,24 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
         <option value="">Select Employee</option>
         <?php 
         if ($userEmployee) {
-            echo '<!-- DEBUG: Current User - Role: ' . $user['role'] . 
+            echo '<!-- DEBUG: Current User - Role: ' . ($user['role'] ?? 'not_set') . 
                  ' | Dept: ' . ($userEmployee['department_id'] ?? 'NULL') . 
                  ' | Section: ' . ($userEmployee['section_id'] ?? 'NULL') . ' -->';
 
             // Regular Employee: Only show their own name
-            if (!in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
-                echo '<option value="' . $userEmployee['id'] . '" selected>' . 
+            if (!in_array($user['role'] ?? '', ['hr_manager', 'dept_head', 'section_head'])) {
+                echo '<option value="' . ($userEmployee['id'] ?? '') . '" selected>' . 
                      htmlspecialchars(
-                         $userEmployee['employee_id'] . ' - ' . 
-                         $userEmployee['first_name'] . ' ' . 
-                         $userEmployee['last_name'] . ' (' . 
+                         ($userEmployee['employee_id'] ?? '') . ' - ' . 
+                         ($userEmployee['first_name'] ?? '') . ' ' . 
+                         ($userEmployee['last_name'] ?? '') . ' (' . 
                          ($userEmployee['designation'] ?? '') . ')'
                      ) . '</option>';
             } 
             // Managers: Show filtered lists
             elseif (isset($employees) && is_array($employees)) {
                 foreach ($employees as $employee) {
-                    $selected = ($employee['id'] == $userEmployee['id']) ? 'selected' : '';
+                    $selected = ($employee['id'] == ($userEmployee['id'] ?? 0)) ? 'selected' : '';
                     echo '<option value="' . $employee['id'] . '" ' . $selected . '>' . 
                          htmlspecialchars(
                              $employee['employee_id'] . ' - ' . 
@@ -2116,99 +2116,3 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
 
 </body>
 </html>
-<?php
-//Get the leave_management_handler
-include 'leave_management_handler.php';
-
-// Handle GET actions for department head approval/rejection
-if (isset($_GET['action'])) {
-    $action = $_GET['action'];
-
-    if ($action === 'dept_head_approve' && isset($_GET['id']) && hasPermission('dept_head')) {
-        $leaveId = (int)$_GET['id'];
-
-        try {
-            $conn->begin_transaction();
-
-            // Get application details
-            $stmt = $conn->prepare("SELECT * FROM leave_applications WHERE id = ?");
-            $stmt->bind_param("i", $leaveId);
-            $stmt->execute();
-            $application = $stmt->get_result()->fetch_assoc();
-
-            // Get current user's employee record
-            $userEmpQuery = "SELECT id FROM employees WHERE employee_id = (SELECT employee_id FROM users WHERE id = ?)";
-            $stmt = $conn->prepare($userEmpQuery);
-            $stmt->bind_param("s", $user['id']);
-            $stmt->execute();
-            $userEmpRecord = $stmt->get_result()->fetch_assoc();
-
-            if ($userEmpRecord && $application && $application['dept_head_emp_id'] == $userEmpRecord['id']) {
-                // Update application status
-                $stmt = $conn->prepare("UPDATE leave_applications SET dept_head_approved = 1, dept_head_approver_id = ? WHERE id = ?");
-                $stmt->bind_param("ii", $userEmpRecord['id'], $leaveId);
-                $stmt->execute();
-
-                $conn->commit();
-                $_SESSION['flash_message'] = "Leave application approved successfully!";
-                $_SESSION['flash_type'] = "success";
-            } else {
-                $conn->rollback();
-                $_SESSION['flash_message'] = "You are not authorized to approve this leave application.";
-                $_SESSION['flash_type'] = "danger";
-            }
-        } catch (Exception $e) {
-            $conn->rollback();
-            $_SESSION['flash_message'] = "Database error: " . $e->getMessage();
-            $_SESSION['flash_type'] = "danger";
-        }
-
-        header("Location: leave_management.php?tab=manage");
-        exit();
-    }
-
-    if ($action === 'dept_head_reject' && isset($_GET['id']) && hasPermission('dept_head')) {
-        $leaveId = (int)$_GET['id'];
-
-        try {
-            $conn->begin_transaction();
-
-            // Get application details
-            $stmt = $conn->prepare("SELECT * FROM leave_applications WHERE id = ?");
-            $stmt->bind_param("i", $leaveId);
-            $stmt->execute();
-            $application = $stmt->get_result()->fetch_assoc();
-
-            // Get current user's employee record
-           $userEmpQuery = "SELECT id FROM employees WHERE employee_id = (SELECT employee_id FROM users WHERE id = ?)";
-            $stmt = $conn->prepare($userEmpQuery);
-            $stmt->bind_param("s", $user['id']);
-            $stmt->execute();
-            $userEmployee = $stmt->get_result()->fetch_assoc();
-
-            if ($userEmployee && $application && $application['dept_head_emp_id'] == $userEmployee['id']) {
-                // Update application status
-                $stmt = $conn->prepare("UPDATE leave_applications SET dept_head_approved = 0, dept_head_approver_id = ? WHERE id = ?");
-                $stmt->bind_param("ii", $userEmployee['id'], $leaveId);
-                $stmt->execute();
-
-                $conn->commit();
-                $_SESSION['flash_message'] = "Leave application rejected!";
-                $_SESSION['flash_type'] = "warning";
-            } else {
-                $conn->rollback();
-                $_SESSION['flash_message'] = "You are not authorized to reject this leave application.";
-                $_SESSION['flash_type'] = "danger";
-            }
-        } catch (Exception $e) {
-            $conn->rollback();
-            $_SESSION['flash_message'] = "Database error: " . $e->getMessage();
-            $_SESSION['flash_type'] = "danger";
-        }
-
-        header("Location: leave_management.php?tab=manage");
-        exit();
-    }
-}
-
-?>
