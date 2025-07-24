@@ -7,6 +7,137 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
+// Handle test request for leave days calculation
+if (isset($_GET['test']) && $_GET['test'] === 'leave_calculation') {
+    require_once 'config.php';
+    
+    echo "<h2>Leave Days Calculation Test</h2>";
+    echo "<pre>";
+    
+    try {
+        $conn = getConnection();
+        
+        // Get leave types
+        $leaveTypesQuery = "SELECT id, name, counts_weekends FROM leave_types WHERE is_active = 1";
+        $result = $conn->query($leaveTypesQuery);
+        $leaveTypes = $result->fetch_all(MYSQLI_ASSOC);
+        
+        echo "Available Leave Types:\n";
+        foreach ($leaveTypes as $type) {
+            $weekendNote = $type['counts_weekends'] ? 'Includes weekends/holidays' : 'Excludes weekends/holidays';
+            echo "- {$type['name']} (ID: {$type['id']}) - {$weekendNote}\n";
+        }
+        echo "\n";
+        
+        // Test scenarios
+        $testCases = [
+            [
+                'description' => 'Monday to Friday (1 week)',
+                'start_date' => '2024-07-22', // Monday
+                'end_date' => '2024-07-26',   // Friday
+            ],
+            [
+                'description' => 'Friday to Monday (includes weekend)',
+                'start_date' => '2024-07-26', // Friday
+                'end_date' => '2024-07-29',   // Monday
+            ]
+        ];
+        
+        foreach ($testCases as $testCase) {
+            echo "Test Case: {$testCase['description']}\n";
+            echo "Date Range: {$testCase['start_date']} to {$testCase['end_date']}\n";
+            echo "Calendar Days: " . calculateCalendarDays($testCase['start_date'], $testCase['end_date']) . "\n";
+            echo "Business Days: " . calculateBusinessDays($testCase['start_date'], $testCase['end_date'], $conn, false) . "\n";
+            
+            echo "\nCalculation by Leave Type:\n";
+            foreach ($leaveTypes as $leaveType) {
+                $result = calculateLeaveDays($testCase['start_date'], $testCase['end_date'], $leaveType['id'], $conn);
+                echo "- {$result['leave_type']}: {$result['days']} days ({$result['note']})\n";
+            }
+            echo "\n" . str_repeat("-", 50) . "\n\n";
+        }
+        
+        $conn->close();
+        echo "Test completed successfully!";
+        
+    } catch (Exception $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    
+    echo "</pre>";
+    echo '<p><a href="leave_management.php">Back to Leave Management</a></p>';
+    exit();
+}
+
+// Handle AJAX request for leave days calculation
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'calculate_days') {
+    header('Content-Type: application/json');
+    
+    // Check if user is logged in
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'error' => 'Not authenticated']);
+        exit();
+    }
+    
+    require_once 'config.php';
+    
+    // Sanitize input function
+    function sanitizeInput($data) {
+        return htmlspecialchars(strip_tags(trim($data)));
+    }
+    
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        try {
+            $startDate = sanitizeInput($_POST['start_date'] ?? '');
+            $endDate = sanitizeInput($_POST['end_date'] ?? '');
+            $leaveTypeId = (int)($_POST['leave_type_id'] ?? 0);
+            
+            // Validate inputs
+            if (empty($startDate) || empty($endDate) || $leaveTypeId <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Invalid input parameters']);
+                exit();
+            }
+            
+            // Validate date format and range
+            $start = DateTime::createFromFormat('Y-m-d', $startDate);
+            $end = DateTime::createFromFormat('Y-m-d', $endDate);
+            
+            if (!$start || !$end) {
+                echo json_encode(['success' => false, 'error' => 'Invalid date format']);
+                exit();
+            }
+            
+            if ($end < $start) {
+                echo json_encode(['success' => false, 'error' => 'End date must be after start date']);
+                exit();
+            }
+            
+            // Connect to database
+            $conn = getConnection();
+            
+            // Calculate leave days
+            $result = calculateLeaveDays($startDate, $endDate, $leaveTypeId, $conn);
+            
+            $conn->close();
+            
+            echo json_encode([
+                'success' => true,
+                'days' => $result['days'],
+                'note' => $result['note'],
+                'leave_type' => $result['leave_type'],
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => 'Database error: ' . $e->getMessage()]);
+        }
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Invalid request method']);
+    }
+    exit();
+}
+
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
@@ -1262,7 +1393,7 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
 
                         if (end >= start) {
                             // Make AJAX call to calculate days based on leave type
-                            fetch('calculate_leave_days.php', {
+                            fetch('leave_management.php?ajax=calculate_days', {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/x-www-form-urlencoded',
