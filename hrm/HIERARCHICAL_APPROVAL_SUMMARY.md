@@ -15,12 +15,12 @@ The HR system now implements a comprehensive hierarchical leave approval workflo
 - **Step 1**: Department Head approval required
 - **Final**: Leave approved after department head approval
 
-### 3. **Department Head/Manager** (HR Approval)
-- **Step 1**: HR Manager approval required
-- **Final**: Leave approved after HR approval
+### 3. **Department Head/Manager** (Executive Approval)
+- **Step 1**: Managing Director OR HR Manager approval required
+- **Final**: Leave approved after executive approval
 
-### 4. **Managing Director** (HR Approval Required)
-- **Step 1**: HR Manager approval required
+### 4. **Managing Director** (Executive Approval)
+- **Step 1**: HR Manager approval required (Managing Director cannot approve own leave)
 - **Final**: Leave approved after HR Manager approval
 
 ### 5. **HR Manager** (Auto-Approved)
@@ -170,14 +170,52 @@ Step 1: Hezron Njoroge (Dept Head) approves
 Result: Leave approved, balance updated
 ```
 
-### Example 3: Managing Director Leave Application
+### Example 3: Department Head Leave Application
+```
+Employee: Hezron Njoroge (Department Head)
+Application: 5 days annual leave
+Workflow: Managing Director OR HR Manager approval required
+
+Step 1: Either Managing Director OR HR Manager approves
+Result: Leave approved, balance updated
+```
+
+### Example 4: Managing Director Leave Application
 ```
 Employee: John Kamau (Managing Director)
 Application: 7 days annual leave
-Workflow: HR Manager approval required
+Workflow: HR Manager approval required (cannot approve own leave)
 
 Step 1: HR Manager approves
 Result: Leave approved, balance updated
 ```
 
-The hierarchical approval system ensures proper organizational oversight while maintaining efficiency and clear communication throughout the approval process.
+## Updated Approval Matrix
+
+| Employee Type | Approval Workflow | Who Can Approve |
+|---------------|-------------------|-----------------|
+| Officer/Employee | Section Head → Department Head | Section Head, then Department Head |
+| Section Head | Department Head | Department Head |
+| **Department Head** | **Executive Approval** | **Managing Director OR HR Manager** |
+| **Manager** | **Executive Approval** | **Managing Director OR HR Manager** |
+| **Managing Director** | **HR Manager Only** | **HR Manager** |
+| HR Manager | Auto-approved | No approval needed |
+
+## Key Benefits of Executive Approval System
+
+### 1. **Flexible Executive Oversight**
+- Department Heads and Managers can be approved by either Managing Director or HR Manager
+- Provides redundancy in case one executive is unavailable
+- Managing Director cannot approve own leave (conflict of interest prevention)
+
+### 2. **Proper Segregation of Duties**
+- HR Manager can approve all management-level leave
+- Managing Director can approve department/manager leave but not own
+- Clear separation of approval authority
+
+### 3. **Enhanced Availability**
+- Two potential approvers for management leave reduces delays
+- System continues to function even if one executive is on leave
+- Better business continuity
+
+The hierarchical approval system ensures proper organizational oversight while maintaining efficiency and clear communication throughout the approval process. Both Managing Directors and HR Managers can approve department head and manager leave, ensuring proper executive oversight with built-in redundancy.
