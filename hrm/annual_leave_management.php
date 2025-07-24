@@ -445,5 +445,281 @@ $awardHistory = getAwardHistoryForYear($conn, $selectedYear);
             </div>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Financial year form validation and enhancement
+            const financialYearForm = document.querySelector('form[action=""][method="POST"]');
+            const financialYearInput = document.getElementById('financial_year');
+            
+            if (financialYearForm && financialYearInput) {
+                // Auto-format financial year input
+                financialYearInput.addEventListener('input', function() {
+                    let value = this.value.replace(/[^0-9-]/g, ''); // Only allow numbers and hyphens
+                    
+                    // Auto-format to YYYY-YYYY pattern
+                    if (value.length === 4 && !value.includes('-')) {
+                        const currentYear = parseInt(value);
+                        value = currentYear + '-' + (currentYear + 1);
+                        this.value = value;
+                    }
+                });
+                
+                // Enhanced form validation
+                financialYearForm.addEventListener('submit', function(e) {
+                    const yearValue = financialYearInput.value.trim();
+                    
+                    // Validate format
+                    const yearPattern = /^\d{4}-\d{4}$/;
+                    if (!yearPattern.test(yearValue)) {
+                        e.preventDefault();
+                        alert('Please enter financial year in format YYYY-YYYY (e.g., 2024-2025)');
+                        financialYearInput.focus();
+                        return false;
+                    }
+                    
+                    // Validate year sequence
+                    const years = yearValue.split('-');
+                    const startYear = parseInt(years[0]);
+                    const endYear = parseInt(years[1]);
+                    
+                    if (endYear !== startYear + 1) {
+                        e.preventDefault();
+                        alert('End year must be exactly one year after start year (e.g., 2024-2025)');
+                        financialYearInput.focus();
+                        return false;
+                    }
+                    
+                    // Validate reasonable year range
+                    const currentYear = new Date().getFullYear();
+                    if (startYear < currentYear - 5 || startYear > currentYear + 5) {
+                        e.preventDefault();
+                        alert('Please enter a reasonable financial year (within 5 years of current year)');
+                        financialYearInput.focus();
+                        return false;
+                    }
+                    
+                    // Confirm action
+                    const confirmMessage = `Are you sure you want to start financial year ${yearValue}?\n\nThis will:\n- Award 30 days of annual leave to all permanent employees\n- Create leave balances for the new financial year\n- This action cannot be undone`;
+                    
+                    if (!confirm(confirmMessage)) {
+                        e.preventDefault();
+                        return false;
+                    }
+                });
+                
+                // Suggest current financial year
+                const currentDate = new Date();
+                const currentMonth = currentDate.getMonth() + 1; // 0-based month
+                const currentYear = currentDate.getFullYear();
+                
+                // If it's July or later, suggest current year as start year
+                let suggestedStartYear = currentYear;
+                if (currentMonth < 7) {
+                    // If before July, suggest previous year as start year
+                    suggestedStartYear = currentYear - 1;
+                }
+                
+                const suggestedFinancialYear = suggestedStartYear + '-' + (suggestedStartYear + 1);
+                
+                // Add placeholder with suggestion
+                financialYearInput.placeholder = `e.g., ${suggestedFinancialYear}`;
+                
+                // Add helper text
+                const helpText = document.createElement('small');
+                helpText.className = 'form-text text-muted';
+                helpText.innerHTML = `Suggested: <strong>${suggestedFinancialYear}</strong> (based on current date)`;
+                financialYearInput.parentNode.appendChild(helpText);
+            }
+            
+            // Enhanced financial year dropdown functionality
+            const yearDropdowns = document.querySelectorAll('select[name="year"]');
+            yearDropdowns.forEach(function(dropdown) {
+                dropdown.addEventListener('change', function() {
+                    // Add loading indicator
+                    const form = this.closest('form');
+                    if (form) {
+                        const loadingSpan = document.createElement('span');
+                        loadingSpan.innerHTML = ' <em>Loading...</em>';
+                        loadingSpan.className = 'loading-indicator';
+                        this.parentNode.appendChild(loadingSpan);
+                        
+                        // Submit form after short delay to show loading
+                        setTimeout(function() {
+                            form.submit();
+                        }, 100);
+                    }
+                });
+            });
+            
+            // Add tooltips to statistical cards
+            const statCards = document.querySelectorAll('.stat-card');
+            statCards.forEach(function(card) {
+                const number = card.querySelector('.stat-number');
+                const label = card.querySelector('.stat-label');
+                
+                if (number && label) {
+                    const value = number.textContent.trim();
+                    const labelText = label.textContent.trim();
+                    
+                    // Add hover effect and tooltip
+                    card.style.cursor = 'help';
+                    card.title = `${labelText}: ${value}`;
+                    
+                    card.addEventListener('mouseenter', function() {
+                        this.style.transform = 'translateY(-2px)';
+                        this.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)';
+                        this.style.transition = 'all 0.2s ease';
+                    });
+                    
+                    card.addEventListener('mouseleave', function() {
+                        this.style.transform = 'translateY(0)';
+                        this.style.boxShadow = '';
+                    });
+                }
+            });
+            
+            // Enhanced table interactions
+            const tables = document.querySelectorAll('.table');
+            tables.forEach(function(table) {
+                const rows = table.querySelectorAll('tbody tr');
+                
+                rows.forEach(function(row) {
+                    // Add hover effect to table rows
+                    row.addEventListener('mouseenter', function() {
+                        this.style.backgroundColor = '#f8f9fa';
+                        this.style.transition = 'background-color 0.2s ease';
+                    });
+                    
+                    row.addEventListener('mouseleave', function() {
+                        this.style.backgroundColor = '';
+                    });
+                });
+            });
+            
+            // Add search functionality to tables
+            const tableContainers = document.querySelectorAll('.table-container');
+            tableContainers.forEach(function(container) {
+                const table = container.querySelector('table');
+                const header = container.querySelector('h3, h4');
+                
+                if (table && header && table.querySelectorAll('tbody tr').length > 5) {
+                    // Add search input
+                    const searchDiv = document.createElement('div');
+                    searchDiv.className = 'table-search';
+                    searchDiv.style.marginBottom = '15px';
+                    
+                    const searchInput = document.createElement('input');
+                    searchInput.type = 'text';
+                    searchInput.placeholder = 'Search in table...';
+                    searchInput.className = 'form-control';
+                    searchInput.style.maxWidth = '300px';
+                    searchInput.style.display = 'inline-block';
+                    
+                    searchDiv.appendChild(searchInput);
+                    header.parentNode.insertBefore(searchDiv, table);
+                    
+                    // Search functionality
+                    searchInput.addEventListener('input', function() {
+                        const searchTerm = this.value.toLowerCase();
+                        const rows = table.querySelectorAll('tbody tr');
+                        
+                        rows.forEach(function(row) {
+                            const text = row.textContent.toLowerCase();
+                            if (text.includes(searchTerm)) {
+                                row.style.display = '';
+                            } else {
+                                row.style.display = 'none';
+                            }
+                        });
+                        
+                        // Show/hide "no results" message
+                        const visibleRows = Array.from(rows).filter(row => row.style.display !== 'none');
+                        let noResultsRow = table.querySelector('.no-results-row');
+                        
+                        if (visibleRows.length === 0 && searchTerm) {
+                            if (!noResultsRow) {
+                                noResultsRow = document.createElement('tr');
+                                noResultsRow.className = 'no-results-row';
+                                noResultsRow.innerHTML = `<td colspan="${table.querySelectorAll('thead th').length}" class="text-center"><em>No results found for "${searchTerm}"</em></td>`;
+                                table.querySelector('tbody').appendChild(noResultsRow);
+                            }
+                            noResultsRow.style.display = '';
+                        } else if (noResultsRow) {
+                            noResultsRow.style.display = 'none';
+                        }
+                    });
+                }
+            });
+            
+            // Auto-refresh functionality for real-time updates
+            let refreshInterval;
+            const refreshButton = document.createElement('button');
+            refreshButton.type = 'button';
+            refreshButton.className = 'btn btn-outline-secondary btn-sm';
+            refreshButton.innerHTML = '🔄 Auto-refresh: OFF';
+            refreshButton.style.position = 'fixed';
+            refreshButton.style.bottom = '20px';
+            refreshButton.style.right = '20px';
+            refreshButton.style.zIndex = '1000';
+            
+            document.body.appendChild(refreshButton);
+            
+            let autoRefreshEnabled = false;
+            refreshButton.addEventListener('click', function() {
+                autoRefreshEnabled = !autoRefreshEnabled;
+                
+                if (autoRefreshEnabled) {
+                    this.innerHTML = '🔄 Auto-refresh: ON';
+                    this.className = 'btn btn-success btn-sm';
+                    
+                    refreshInterval = setInterval(function() {
+                        // Only refresh if no forms are being filled
+                        const activeElement = document.activeElement;
+                        if (!activeElement || (activeElement.tagName !== 'INPUT' && activeElement.tagName !== 'TEXTAREA')) {
+                            window.location.reload();
+                        }
+                    }, 30000); // Refresh every 30 seconds
+                } else {
+                    this.innerHTML = '🔄 Auto-refresh: OFF';
+                    this.className = 'btn btn-outline-secondary btn-sm';
+                    
+                    if (refreshInterval) {
+                        clearInterval(refreshInterval);
+                    }
+                }
+            });
+            
+            // Keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+R or F5 - Manual refresh
+                if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
+                    e.preventDefault();
+                    window.location.reload();
+                }
+                
+                // Ctrl+F - Focus search (if available)
+                if (e.ctrlKey && e.key === 'f') {
+                    const searchInput = document.querySelector('.table-search input');
+                    if (searchInput) {
+                        e.preventDefault();
+                        searchInput.focus();
+                        searchInput.select();
+                    }
+                }
+                
+                // Escape - Clear search
+                if (e.key === 'Escape') {
+                    const searchInputs = document.querySelectorAll('.table-search input');
+                    searchInputs.forEach(function(input) {
+                        if (input.value) {
+                            input.value = '';
+                            input.dispatchEvent(new Event('input'));
+                        }
+                    });
+                }
+            });
+        });
+    </script>
 </body>
 </html>

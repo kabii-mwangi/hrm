@@ -259,5 +259,190 @@ $conn->close();
             </div>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Enhance statistics cards with hover effects
+            const statCards = document.querySelectorAll('.stat-card');
+            statCards.forEach(function(card) {
+                card.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-3px)';
+                    this.style.boxShadow = '0 6px 12px rgba(0,0,0,0.15)';
+                    this.style.transition = 'all 0.3s ease';
+                });
+                
+                card.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0)';
+                    this.style.boxShadow = '';
+                });
+            });
+            
+            // Enhance table rows with hover effects
+            const tableRows = document.querySelectorAll('.table tbody tr');
+            tableRows.forEach(function(row) {
+                row.addEventListener('mouseenter', function() {
+                    this.style.backgroundColor = '#f8f9fa';
+                    this.style.transition = 'background-color 0.2s ease';
+                });
+                
+                row.addEventListener('mouseleave', function() {
+                    this.style.backgroundColor = '';
+                });
+            });
+            
+            // Add click-to-copy functionality for employee IDs
+            const employeeIds = document.querySelectorAll('.table tbody tr td:first-child');
+            employeeIds.forEach(function(cell) {
+                cell.style.cursor = 'pointer';
+                cell.title = 'Click to copy Employee ID';
+                
+                cell.addEventListener('click', function() {
+                    const text = this.textContent.trim();
+                    navigator.clipboard.writeText(text).then(function() {
+                        // Show temporary feedback
+                        const originalText = cell.textContent;
+                        cell.textContent = '✓ Copied!';
+                        cell.style.color = '#28a745';
+                        
+                        setTimeout(function() {
+                            cell.textContent = originalText;
+                            cell.style.color = '';
+                        }, 1000);
+                    }).catch(function() {
+                        // Fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = text;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        
+                        const originalText = cell.textContent;
+                        cell.textContent = '✓ Copied!';
+                        cell.style.color = '#28a745';
+                        
+                        setTimeout(function() {
+                            cell.textContent = originalText;
+                            cell.style.color = '';
+                        }, 1000);
+                    });
+                });
+            });
+            
+            // Add real-time clock
+            function updateClock() {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString();
+                const dateString = now.toLocaleDateString();
+                
+                // Find or create clock element
+                let clockElement = document.getElementById('real-time-clock');
+                if (!clockElement) {
+                    clockElement = document.createElement('div');
+                    clockElement.id = 'real-time-clock';
+                    clockElement.style.position = 'fixed';
+                    clockElement.style.top = '10px';
+                    clockElement.style.right = '10px';
+                    clockElement.style.background = 'rgba(255,255,255,0.9)';
+                    clockElement.style.padding = '5px 10px';
+                    clockElement.style.borderRadius = '5px';
+                    clockElement.style.fontSize = '12px';
+                    clockElement.style.color = '#666';
+                    clockElement.style.zIndex = '1000';
+                    clockElement.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+                    document.body.appendChild(clockElement);
+                }
+                
+                clockElement.innerHTML = `${dateString}<br>${timeString}`;
+            }
+            
+            // Update clock every second
+            updateClock();
+            setInterval(updateClock, 1000);
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Alt+E - Go to employees
+                if (e.altKey && e.key === 'e') {
+                    e.preventDefault();
+                    window.location.href = 'employees.php';
+                }
+                
+                // Alt+L - Go to leave management
+                if (e.altKey && e.key === 'l') {
+                    e.preventDefault();
+                    window.location.href = 'leave_management.php';
+                }
+                
+                // Alt+A - Go to annual leave awards (if user has permission)
+                if (e.altKey && e.key === 'a') {
+                    const annualLeaveLink = document.querySelector('a[href="annual_leave_management.php"]');
+                    if (annualLeaveLink) {
+                        e.preventDefault();
+                        window.location.href = 'annual_leave_management.php';
+                    }
+                }
+                
+                // F5 or Ctrl+R - Refresh
+                if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                    e.preventDefault();
+                    window.location.reload();
+                }
+            });
+            
+            // Add welcome animation
+            const header = document.querySelector('.header h1');
+            if (header) {
+                header.style.opacity = '0';
+                header.style.transform = 'translateY(-20px)';
+                header.style.transition = 'all 0.6s ease';
+                
+                setTimeout(function() {
+                    header.style.opacity = '1';
+                    header.style.transform = 'translateY(0)';
+                }, 100);
+            }
+            
+            // Animate stat cards on load
+            const statCardsForAnimation = document.querySelectorAll('.stat-card');
+            statCardsForAnimation.forEach(function(card, index) {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                card.style.transition = 'all 0.6s ease';
+                
+                setTimeout(function() {
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0)';
+                }, 200 + (index * 100));
+            });
+            
+            // Add tooltips with keyboard shortcuts info
+            const helpButton = document.createElement('button');
+            helpButton.innerHTML = '?';
+            helpButton.className = 'btn btn-outline-info btn-sm';
+            helpButton.style.position = 'fixed';
+            helpButton.style.bottom = '20px';
+            helpButton.style.left = '20px';
+            helpButton.style.borderRadius = '50%';
+            helpButton.style.width = '35px';
+            helpButton.style.height = '35px';
+            helpButton.style.zIndex = '1000';
+            helpButton.title = 'Keyboard Shortcuts';
+            
+            helpButton.addEventListener('click', function() {
+                const shortcuts = [
+                    'Alt + E: Go to Employees',
+                    'Alt + L: Go to Leave Management',
+                    'Alt + A: Go to Annual Leave Awards',
+                    'F5 / Ctrl + R: Refresh page',
+                    'Click Employee ID to copy'
+                ];
+                
+                alert('Keyboard Shortcuts:\n\n' + shortcuts.join('\n'));
+            });
+            
+            document.body.appendChild(helpButton);
+        });
+    </script>
 </body>
 </html>
