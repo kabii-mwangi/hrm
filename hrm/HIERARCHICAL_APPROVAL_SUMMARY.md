@@ -23,8 +23,10 @@ The HR system now implements a comprehensive hierarchical leave approval workflo
 - **Step 1**: HR Manager approval required (Managing Director cannot approve own leave)
 - **Final**: Leave approved after HR Manager approval
 
-### 5. **HR Manager** (Auto-Approved)
-- **No approval required**: Leave automatically approved
+### 5. **HR Manager** (Managing Director Approval)
+- **Step 1**: Managing Director approval required
+- **Final**: Leave approved after Managing Director approval
+- **Note**: HR Manager cannot approve their own leave (conflict of interest)
 
 ## Key Features Implemented
 
@@ -190,6 +192,16 @@ Step 1: HR Manager approves
 Result: Leave approved, balance updated
 ```
 
+### Example 5: HR Manager Leave Application
+```
+Employee: HR Manager
+Application: 4 days annual leave
+Workflow: Managing Director approval required (cannot approve own leave)
+
+Step 1: Managing Director approves
+Result: Leave approved, balance updated
+```
+
 ## Updated Approval Matrix
 
 | Employee Type | Approval Workflow | Who Can Approve |
@@ -199,7 +211,7 @@ Result: Leave approved, balance updated
 | **Department Head** | **Executive Approval** | **Managing Director OR HR Manager** |
 | **Manager** | **Executive Approval** | **Managing Director OR HR Manager** |
 | **Managing Director** | **HR Manager Only** | **HR Manager** |
-| HR Manager | Auto-approved | No approval needed |
+| **HR Manager** | **Managing Director Only** | **Managing Director** |
 
 ## Key Benefits of Executive Approval System
 
@@ -209,13 +221,20 @@ Result: Leave approved, balance updated
 - Managing Director cannot approve own leave (conflict of interest prevention)
 
 ### 2. **Proper Segregation of Duties**
-- HR Manager can approve all management-level leave
-- Managing Director can approve department/manager leave but not own
-- Clear separation of approval authority
+- HR Manager can approve management-level leave but not their own
+- Managing Director can approve department/manager leave and HR Manager leave but not own
+- Clear separation of approval authority with conflict of interest prevention
 
 ### 3. **Enhanced Availability**
 - Two potential approvers for management leave reduces delays
 - System continues to function even if one executive is on leave
 - Better business continuity
 
-The hierarchical approval system ensures proper organizational oversight while maintaining efficiency and clear communication throughout the approval process. Both Managing Directors and HR Managers can approve department head and manager leave, ensuring proper executive oversight with built-in redundancy.
+The hierarchical approval system ensures proper organizational oversight while maintaining efficiency and clear communication throughout the approval process. The system now provides:
+
+- **Executive Level Control**: Both Managing Directors and HR Managers can approve department head and manager leave
+- **Conflict of Interest Prevention**: No employee can approve their own leave at any level
+- **Clear Hierarchy**: Managing Director → HR Manager → Department Head → Section Head → Employee
+- **Proper Checks and Balances**: Each level has appropriate oversight from higher authority
+
+This creates a robust approval system with built-in redundancy for management-level approvals while ensuring proper segregation of duties at the executive level.
