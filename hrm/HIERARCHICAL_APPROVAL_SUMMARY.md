@@ -19,7 +19,11 @@ The HR system now implements a comprehensive hierarchical leave approval workflo
 - **Step 1**: HR Manager approval required
 - **Final**: Leave approved after HR approval
 
-### 4. **Managing Director/HR Manager** (Auto-Approved)
+### 4. **Managing Director** (HR Approval Required)
+- **Step 1**: HR Manager approval required
+- **Final**: Leave approved after HR Manager approval
+
+### 5. **HR Manager** (Auto-Approved)
 - **No approval required**: Leave automatically approved
 
 ## Key Features Implemented
@@ -163,6 +167,16 @@ Application: 5 days annual leave
 Workflow: Department Head only
 
 Step 1: Hezron Njoroge (Dept Head) approves
+Result: Leave approved, balance updated
+```
+
+### Example 3: Managing Director Leave Application
+```
+Employee: John Kamau (Managing Director)
+Application: 7 days annual leave
+Workflow: HR Manager approval required
+
+Step 1: HR Manager approves
 Result: Leave approved, balance updated
 ```
 

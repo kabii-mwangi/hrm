@@ -102,6 +102,14 @@ if (isset($_GET['test']) && $_GET['test'] === 'hierarchical_approval') {
         echo "6. Log in as department head to approve second level\n";
         echo "7. Verify that leave is only fully approved after both approvals\n\n";
         
+        echo "=== MANAGING DIRECTOR TEST ===\n";
+        echo "1. Find a managing director employee\n";
+        echo "2. Log in as managing director\n";
+        echo "3. Apply for leave\n";
+        echo "4. Check that workflow shows: HR Manager\n";
+        echo "5. Log in as HR Manager to approve\n";
+        echo "6. Verify leave is approved after HR approval\n\n";
+        
         echo "=== CURRENT USER PERMISSIONS ===\n";
         echo "Current user role: " . ($_SESSION['user_role'] ?? 'not_set') . "\n";
         echo "Can approve as section head: " . (hasPermission('section_head') ? 'YES' : 'NO') . "\n";
@@ -486,8 +494,8 @@ function getApprovalWorkflow($employeeType) {
             return ['dept_head']; // Only department head approval
         case 'dept_head':
         case 'manager':
-            return ['hr_manager']; // Only HR approval
         case 'managing_director':
+            return ['hr_manager']; // Only HR approval (including Managing Director)
         case 'hr_manager':
             return []; // No approval needed (auto-approved)
         default:
@@ -501,7 +509,8 @@ function getApprovalWorkflow($employeeType) {
 function createLeaveNotification($conn, $userId, $applicationId, $type) {
     $messages = [
         'section_head_approval' => 'New leave application requires your approval as Section Head',
-        'dept_head_approval' => 'New leave application requires your approval as Department Head'
+        'dept_head_approval' => 'New leave application requires your approval as Department Head',
+        'hr_manager_approval' => 'New leave application requires your approval as HR Manager'
     ];
     
     $message = $messages[$type] ?? 'New leave application requires your approval';
@@ -594,15 +603,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Determine initial approval status based on workflow
                     $sectionHeadApproval = in_array('section_head', $approvalWorkflow) ? 'pending' : 'not_required';
                     $deptHeadApproval = in_array('dept_head', $approvalWorkflow) ? 'pending' : 'not_required';
+                    $hrApproval = in_array('hr_manager', $approvalWorkflow) ? 'pending' : 'not_required';
                     $status = empty($approvalWorkflow) ? 'approved' : 'pending';
                     
                     $stmt = $conn->prepare("INSERT INTO leave_applications 
                         (employee_id, leave_type_id, start_date, end_date, days_requested, reason, 
-                         emergency_contact, emergency_phone, status, section_head_approval, dept_head_approval, applied_at) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-                    $stmt->bind_param("iisssssssss", $employeeId, $leaveTypeId, $startDate, $endDate, 
+                         emergency_contact, emergency_phone, status, section_head_approval, dept_head_approval, hr_approval, applied_at) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+                    $stmt->bind_param("iissssssssss", $employeeId, $leaveTypeId, $startDate, $endDate, 
                                     $days, $reason, $emergencyContact, $emergencyPhone, $status, 
-                                    $sectionHeadApproval, $deptHeadApproval);
+                                    $sectionHeadApproval, $deptHeadApproval, $hrApproval);
 
                     if ($stmt->execute()) {
                         $applicationId = $conn->insert_id;
@@ -613,6 +623,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if (in_array('dept_head', $approvalWorkflow) && $employeeInfo['department_head']) {
                             createLeaveNotification($conn, $employeeInfo['department_head']['id'], $applicationId, 'dept_head_approval');
+                        }
+                        if (in_array('hr_manager', $approvalWorkflow)) {
+                            // Find HR managers to notify
+                            $hrQuery = "SELECT id FROM employees WHERE employee_type = 'hr_manager' AND employee_status = 'active'";
+                            $hrResult = $conn->query($hrQuery);
+                            while ($hrManager = $hrResult->fetch_assoc()) {
+                                createLeaveNotification($conn, $hrManager['id'], $applicationId, 'hr_manager_approval');
+                            }
                         }
                         
                         $workflowText = '';
@@ -659,14 +677,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         // Check if this completes the approval process
                         if ($application['dept_head_approval'] === 'approved' || $application['dept_head_approval'] === 'not_required') {
-                            // All approvals complete - approve the leave
-                            $stmt = $conn->prepare("UPDATE leave_applications SET status = 'approved' WHERE id = ?");
-                            $stmt->bind_param("i", $applicationId);
-                            $stmt->execute();
-                            
-                            // Update leave balance
-                            updateLeaveBalance($application['employee_id'], $application['leave_type_id'], 
-                                             $application['days_requested'], $conn, 'use');
+                            // Check if HR approval is needed
+                            $hrApproval = $application['hr_approval'] ?? 'not_required';
+                            if ($hrApproval === 'approved' || $hrApproval === 'not_required') {
+                                // All approvals complete - approve the leave
+                                $stmt = $conn->prepare("UPDATE leave_applications SET status = 'approved' WHERE id = ?");
+                                $stmt->bind_param("i", $applicationId);
+                                $stmt->execute();
+                                
+                                // Update leave balance
+                                updateLeaveBalance($application['employee_id'], $application['leave_type_id'], 
+                                                 $application['days_requested'], $conn, 'use');
+                            }
                         }
 
                         $conn->commit();
@@ -711,18 +733,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         // Check if section head approval is also complete (or not required)
                         if ($application['section_head_approval'] === 'approved' || $application['section_head_approval'] === 'not_required') {
-                            // All approvals complete - approve the leave
-                            $stmt = $conn->prepare("UPDATE leave_applications SET status = 'approved' WHERE id = ?");
-                            $stmt->bind_param("i", $applicationId);
-                            $stmt->execute();
-                            
-                            // Update leave balance
-                            updateLeaveBalance($application['employee_id'], $application['leave_type_id'], 
-                                             $application['days_requested'], $conn, 'use');
+                            // Check if HR approval is needed
+                            $hrApproval = $application['hr_approval'] ?? 'not_required';
+                            if ($hrApproval === 'approved' || $hrApproval === 'not_required') {
+                                // All approvals complete - approve the leave
+                                $stmt = $conn->prepare("UPDATE leave_applications SET status = 'approved' WHERE id = ?");
+                                $stmt->bind_param("i", $applicationId);
+                                $stmt->execute();
+                                
+                                // Update leave balance
+                                updateLeaveBalance($application['employee_id'], $application['leave_type_id'], 
+                                                 $application['days_requested'], $conn, 'use');
+                            }
                         }
 
                         $conn->commit();
                         $success = "Leave application approved at department level successfully!";
+                    } else {
+                        $conn->rollback();
+                        $error = "Application not found.";
+                    }
+                } catch (Exception $e) {
+                    $conn->rollback();
+                    $error = "Error approving leave: " . $e->getMessage();
+                }
+            }
+            break;
+
+        case 'hr_manager_approve':
+            if (hasPermission('hr_manager')) {
+                $applicationId = (int)$_POST['application_id'];
+                $comments = sanitizeInput($_POST['comments'] ?? '');
+
+                try {
+                    $conn->begin_transaction();
+
+                    // Get application details
+                    $stmt = $conn->prepare("SELECT la.*, e.employee_type 
+                                          FROM leave_applications la 
+                                          JOIN employees e ON la.employee_id = e.id 
+                                          WHERE la.id = ?");
+                    $stmt->bind_param("i", $applicationId);
+                    $stmt->execute();
+                    $application = $stmt->get_result()->fetch_assoc();
+
+                    if ($application) {
+                        // Update HR approval
+                        $stmt = $conn->prepare("UPDATE leave_applications 
+                                              SET hr_approval = 'approved', 
+                                                  hr_processed_by = ?, 
+                                                  hr_processed_at = NOW(),
+                                                  hr_comments = ?,
+                                                  status = 'approved'
+                                              WHERE id = ?");
+                        $stmt->bind_param("ssi", $user['id'], $comments, $applicationId);
+                        $stmt->execute();
+
+                        // Update leave balance
+                        updateLeaveBalance($application['employee_id'], $application['leave_type_id'], 
+                                         $application['days_requested'], $conn, 'use');
+
+                        $conn->commit();
+                        $success = "Leave application approved by HR Manager successfully!";
                     } else {
                         $conn->rollback();
                         $error = "Application not found.";
@@ -905,7 +977,8 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
     if ($tab === 'manage' && hasPermission('hr_manager')) {
         // Get pending leaves filtered by financial year with hierarchical approval status
         $pendingQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, e.employee_type,
-                         lt.name as leave_type_name, d.name as department_name, s.name as section_name
+                         lt.name as leave_type_name, d.name as department_name, s.name as section_name,
+                         COALESCE(la.hr_approval, 'not_required') as hr_approval
                          FROM leave_applications la
                          JOIN employees e ON la.employee_id = e.id
                          JOIN leave_types lt ON la.leave_type_id = lt.id
@@ -1346,6 +1419,7 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                             <?php 
                                             $sectionStatus = $leave['section_head_approval'] ?? 'not_required';
                                             $deptStatus = $leave['dept_head_approval'] ?? 'not_required';
+                                            $hrStatus = $leave['hr_approval'] ?? 'not_required';
                                             
                                             if ($sectionStatus !== 'not_required') {
                                                 $sectionBadge = $sectionStatus === 'approved' ? 'badge-success' : 
@@ -1356,7 +1430,13 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                             if ($deptStatus !== 'not_required') {
                                                 $deptBadge = $deptStatus === 'approved' ? 'badge-success' : 
                                                            ($deptStatus === 'rejected' ? 'badge-danger' : 'badge-warning');
-                                                echo '<span class="badge ' . $deptBadge . '">Dept: ' . ucfirst($deptStatus) . '</span>';
+                                                echo '<span class="badge ' . $deptBadge . '">Dept: ' . ucfirst($deptStatus) . '</span><br>';
+                                            }
+                                            
+                                            if ($hrStatus !== 'not_required') {
+                                                $hrBadge = $hrStatus === 'approved' ? 'badge-success' : 
+                                                          ($hrStatus === 'rejected' ? 'badge-danger' : 'badge-warning');
+                                                echo '<span class="badge ' . $hrBadge . '">HR: ' . ucfirst($hrStatus) . '</span>';
                                             }
                                             ?>
                                         </td>
@@ -1384,9 +1464,20 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                                             <?php endif; ?>
                                             
                                             <?php if (hasPermission('hr_manager')): ?>
-                                                <a href="leave_management.php?action=approve_leave&id=<?php echo $leave['id']; ?>&tab=manage" 
-                                                   class="btn btn-success btn-sm" 
-                                                   onclick="return confirm('Force approve this leave application?')">HR Approve</a>
+                                                <?php if (($leave['hr_approval'] ?? 'not_required') === 'pending'): ?>
+                                                    <form method="POST" style="display: inline;">
+                                                        <input type="hidden" name="action" value="hr_manager_approve">
+                                                        <input type="hidden" name="application_id" value="<?php echo $leave['id']; ?>">
+                                                        <button type="submit" class="btn btn-info btn-sm" 
+                                                                onclick="return confirm('Approve this leave application as HR Manager?')">
+                                                            HR Approve
+                                                        </button>
+                                                    </form>
+                                                <?php else: ?>
+                                                    <a href="leave_management.php?action=approve_leave&id=<?php echo $leave['id']; ?>&tab=manage" 
+                                                       class="btn btn-success btn-sm" 
+                                                       onclick="return confirm('Force approve this leave application?')">Force Approve</a>
+                                                <?php endif; ?>
                                                 <a href="leave_management.php?action=reject_leave&id=<?php echo $leave['id']; ?>&tab=manage" 
                                                    class="btn btn-danger btn-sm" 
                                                    onclick="return confirm('Reject this leave application?')">Reject</a>
