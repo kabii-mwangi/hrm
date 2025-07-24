@@ -14,7 +14,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once 'config.php';
-require_once 'annual_leave_award.php';
+require_once 'annual_leave_award_new.php';
 
 $conn = getConnection();
 
@@ -69,75 +69,53 @@ function setFlashMessage($message, $type = 'info') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     
-    if ($action === 'award_annual_leave') {
-        $force = isset($_POST['force']) && $_POST['force'] === '1';
+    if ($action === 'start_new_financial_year') {
+        $financial_year = sanitizeInput($_POST['financial_year'] ?? '');
         
-        // Capture output
-        ob_start();
-        $result = checkAndAwardAnnualLeave($conn, $force);
-        $output = ob_get_clean();
-        
-        if ($result['success']) {
-            $message = "Annual leave awarded successfully! {$result['awarded_count']} employees received leave for financial year {$result['financial_year']}.";
-            setFlashMessage($message, 'success');
+        if (empty($financial_year)) {
+            setFlashMessage("Please enter a valid financial year (e.g., 2024-2025)", 'danger');
         } else {
-            $message = "Failed to award annual leave: " . ($result['error'] ?? 'Unknown error');
-            setFlashMessage($message, 'danger');
+            try {
+                $result = startNewFinancialYear($conn, $financial_year, $user['id']);
+                
+                if ($result['success']) {
+                    $message = "New financial year {$financial_year} started successfully! {$result['awarded_count']} employees received 30 days of annual leave.";
+                    setFlashMessage($message, 'success');
+                } else {
+                    setFlashMessage($result['message'], 'danger');
+                }
+            } catch (Exception $e) {
+                setFlashMessage("Error starting new financial year: " . $e->getMessage(), 'danger');
+            }
         }
-        
-        // Store detailed output in session for display
-        $_SESSION['award_output'] = $output;
         
         header("Location: annual_leave_management.php");
         exit();
     }
 }
 
-// Get award history
-$historyQuery = "SELECT * FROM leave_award_log ORDER BY run_date DESC LIMIT 20";
-$historyResult = $conn->query($historyQuery);
-$awardHistory = $historyResult ? $historyResult->fetch_all(MYSQLI_ASSOC) : [];
+// Get available financial years
+$availableYears = getAvailableFinancialYears($conn);
 
 // Get current financial year info
 $currentFinancialYear = getCurrentFinancialYear();
-$isBeginningOfYear = isBeginningOfFinancialYear();
 
-// Get statistics for current financial year
-$statsQuery = "SELECT 
-    COUNT(DISTINCT lb.employee_id) as employees_with_leave,
-    SUM(lb.annual_leave_entitled) as total_entitled,
-    SUM(lb.annual_leave_used) as total_used,
-    SUM(lb.annual_leave_balance) as total_balance
-FROM leave_balances lb 
-JOIN leave_types lt ON lb.leave_type_id = lt.id 
-WHERE lb.financial_year = ? AND lt.name = 'Annual Leave'";
+// Get selected financial year for viewing (default to current)
+$selectedYear = $_GET['year'] ?? $currentFinancialYear;
 
-$stmt = $conn->prepare($statsQuery);
-$stmt->bind_param("s", $currentFinancialYear);
-$stmt->execute();
-$stats = $stmt->get_result()->fetch_assoc();
+// Get statistics for selected financial year
+$stats = getFinancialYearStats($conn, $selectedYear);
 
 // Get permanent employees count
 $permanentEmployeesQuery = "SELECT COUNT(*) as count FROM employees WHERE employment_type = 'permanent' AND employee_status = 'active'";
 $permanentResult = $conn->query($permanentEmployeesQuery);
 $permanentCount = $permanentResult->fetch_assoc()['count'];
 
-// Get detailed leave balances for current year
-$balancesQuery = "SELECT 
-    e.employee_id, e.first_name, e.last_name, e.hire_date,
-    lb.annual_leave_entitled, lb.annual_leave_used, lb.annual_leave_balance,
-    d.name as department_name
-FROM leave_balances lb
-JOIN employees e ON lb.employee_id = e.id
-JOIN leave_types lt ON lb.leave_type_id = lt.id
-LEFT JOIN departments d ON e.department_id = d.id
-WHERE lb.financial_year = ? AND lt.name = 'Annual Leave' AND e.employment_type = 'permanent'
-ORDER BY e.first_name, e.last_name";
+// Get detailed leave balances for selected year
+$leaveBalances = getLeaveBalancesForYear($conn, $selectedYear);
 
-$stmt = $conn->prepare($balancesQuery);
-$stmt->bind_param("s", $currentFinancialYear);
-$stmt->execute();
-$leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+// Get award history for selected year
+$awardHistory = getAwardHistoryForYear($conn, $selectedYear);
 ?>
 
 <!DOCTYPE html>
@@ -317,74 +295,87 @@ $leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                     </div>
                 </div>
 
-                <!-- Award Section -->
+                <!-- Financial Year Filter -->
+                <div class="filter-section">
+                    <h3>Financial Year Selection</h3>
+                    <form method="GET" style="display: inline-block; margin-right: 20px;">
+                        <select name="year" onchange="this.form.submit()" class="form-control" style="display: inline-block; width: auto;">
+                            <?php foreach ($availableYears as $year): ?>
+                                <option value="<?php echo $year; ?>" <?php echo ($year === $selectedYear) ? 'selected' : ''; ?>>
+                                    <?php echo $year; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                    <span>Viewing data for: <strong><?php echo $selectedYear; ?></strong></span>
+                </div>
+
+                <!-- Start New Financial Year Section -->
                 <div class="award-section">
-                    <h3>Award Annual Leave</h3>
-                    <p>Awards 30 days of annual leave to all permanently employed active employees for the current financial year.</p>
+                    <h3>Start New Financial Year</h3>
+                    <p>Manually start a new financial year and award 30 days of annual leave to all permanently employed active employees.</p>
                     
-                    <?php if ($isBeginningOfYear): ?>
-                        <div class="alert alert-success">
-                            <strong>Beginning of Financial Year Detected!</strong> 
-                            It's the perfect time to award annual leave to employees.
-                        </div>
-                    <?php else: ?>
-                        <div class="alert alert-info">
-                            <strong>Note:</strong> Annual leave is typically awarded at the beginning of the financial year (July). 
-                            You can force the award process using the "Force Award" button.
-                        </div>
-                    <?php endif; ?>
+                    <div class="alert alert-info">
+                        <strong>Instructions:</strong> Enter the financial year in YYYY-YYYY format (e.g., 2024-2025). 
+                        This will create leave balances for all permanent employees for that year.
+                    </div>
                     
-                    <form method="POST" onsubmit="return confirm('Are you sure you want to award annual leave? This will process all permanent employees.');">
-                        <input type="hidden" name="action" value="award_annual_leave">
+                    <form method="POST" onsubmit="return confirm('Are you sure you want to start this new financial year? This will award leave to all permanent employees.');">
+                        <input type="hidden" name="action" value="start_new_financial_year">
                         
-                        <?php if ($isBeginningOfYear): ?>
-                            <button type="submit" class="award-button">Award Annual Leave</button>
-                        <?php endif; ?>
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="financial_year">Financial Year:</label>
+                            <input type="text" id="financial_year" name="financial_year" 
+                                   placeholder="e.g., 2024-2025" 
+                                   pattern="^\d{4}-\d{4}$" 
+                                   title="Format: YYYY-YYYY (e.g., 2024-2025)"
+                                   class="form-control" 
+                                   style="width: 200px; display: inline-block; margin-left: 10px;" 
+                                   required>
+                        </div>
                         
-                        <button type="submit" name="force" value="1" class="award-button danger" 
-                                onclick="return confirm('Force award will process leave regardless of the date. Continue?');">
-                            Force Award Annual Leave
+                        <button type="submit" class="award-button">
+                            Start New Financial Year & Award Leave
                         </button>
                     </form>
-                    
-                    <?php if (isset($_SESSION['award_output'])): ?>
-                        <div class="output-box"><?php echo htmlspecialchars($_SESSION['award_output']); ?></div>
-                        <?php unset($_SESSION['award_output']); ?>
-                    <?php endif; ?>
                 </div>
 
                 <!-- Award History -->
                 <div class="card">
                     <div class="card-header">
-                        <h3>Award History</h3>
+                        <h3>Award History for <?php echo $selectedYear; ?></h3>
                     </div>
                     <div class="card-body">
                         <?php if (empty($awardHistory)): ?>
-                            <p>No award history found.</p>
+                            <p>No award history found for <?php echo $selectedYear; ?>.</p>
                         <?php else: ?>
                             <div class="table-responsive">
                                 <table class="table">
                                     <thead>
                                         <tr>
-                                            <th>Financial Year</th>
-                                            <th>Date</th>
-                                            <th>Employees Processed</th>
-                                            <th>Employees Awarded</th>
-                                            <th>Run By</th>
+                                            <th>Employee ID</th>
+                                            <th>Employee Name</th>
+                                            <th>Days Awarded</th>
+                                            <th>Award Type</th>
+                                            <th>Date Awarded</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <?php foreach ($awardHistory as $record): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($record['financial_year']); ?></td>
-                                                <td><?php echo date('M d, Y H:i', strtotime($record['run_date'])); ?></td>
-                                                <td><?php echo $record['employees_processed']; ?></td>
+                                                <td><?php echo htmlspecialchars($record['emp_id']); ?></td>
+                                                <td><?php echo htmlspecialchars($record['first_name'] . ' ' . $record['last_name']); ?></td>
                                                 <td>
                                                     <span class="badge badge-success">
-                                                        <?php echo $record['employees_awarded']; ?>
+                                                        <?php echo $record['days_awarded']; ?> days
                                                     </span>
                                                 </td>
-                                                <td><?php echo htmlspecialchars($record['run_by']); ?></td>
+                                                <td>
+                                                    <span class="badge <?php echo $record['award_type'] === 'full' ? 'badge-success' : 'badge-warning'; ?>">
+                                                        <?php echo ucfirst($record['award_type']); ?>
+                                                    </span>
+                                                </td>
+                                                <td><?php echo date('M d, Y H:i', strtotime($record['awarded_at'])); ?></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
@@ -394,14 +385,14 @@ $leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                     </div>
                 </div>
 
-                <!-- Current Year Leave Balances -->
+                <!-- Selected Year Leave Balances -->
                 <div class="card" style="margin-top: 30px;">
                     <div class="card-header">
-                        <h3>Leave Balances for <?php echo $currentFinancialYear; ?></h3>
+                        <h3>Leave Balances for <?php echo $selectedYear; ?></h3>
                     </div>
                     <div class="card-body">
                         <?php if (empty($leaveBalances)): ?>
-                            <p>No leave balances found for the current financial year. Consider awarding annual leave to employees.</p>
+                            <p>No leave balances found for <?php echo $selectedYear; ?>. Start a new financial year to award annual leave to employees.</p>
                         <?php else: ?>
                             <div class="table-responsive">
                                 <table class="table">
@@ -410,6 +401,7 @@ $leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                             <th>Employee ID</th>
                                             <th>Name</th>
                                             <th>Department</th>
+                                            <th>Section</th>
                                             <th>Hire Date</th>
                                             <th>Entitled</th>
                                             <th>Used</th>
@@ -423,6 +415,7 @@ $leaveBalances = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                                 <td><?php echo htmlspecialchars($balance['employee_id']); ?></td>
                                                 <td><?php echo htmlspecialchars($balance['first_name'] . ' ' . $balance['last_name']); ?></td>
                                                 <td><?php echo htmlspecialchars($balance['department_name'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($balance['section_name'] ?? 'N/A'); ?></td>
                                                 <td><?php echo date('M d, Y', strtotime($balance['hire_date'])); ?></td>
                                                 <td><?php echo $balance['annual_leave_entitled']; ?></td>
                                                 <td><?php echo $balance['annual_leave_used']; ?></td>

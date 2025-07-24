@@ -14,10 +14,16 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once 'config.php';
+require_once 'annual_leave_award_new.php';
 $conn = getConnection();
 
 // Initialize $tab with default value BEFORE any output
 $tab = isset($_GET['tab']) ? sanitizeInput($_GET['tab']) : 'apply';
+
+// Get available financial years and selected year for filtering
+$availableYears = getAvailableFinancialYears($conn);
+$currentFinancialYear = getCurrentFinancialYear();
+$selectedYear = $_GET['year'] ?? $currentFinancialYear;
 
 // Get current user from session
 $user = [
@@ -382,7 +388,7 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
 
     // Prepare data based on tab
     if ($tab === 'manage' && hasPermission('hr_manager')) {
-        // Get pending leaves
+        // Get pending leaves filtered by financial year
         $pendingQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, 
                          lt.name as leave_type_name, d.name as department_name, s.name as section_name
                          FROM leave_applications la
@@ -390,54 +396,69 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                          JOIN leave_types lt ON la.leave_type_id = lt.id
                          LEFT JOIN departments d ON e.department_id = d.id
                          LEFT JOIN sections s ON e.section_id = s.id
+                         LEFT JOIN leave_balances lb ON e.id = lb.employee_id AND lb.financial_year = ?
                          WHERE la.status = 'pending'
                          ORDER BY la.applied_at DESC";
-        $pendingResult = $conn->query($pendingQuery);
-        $pendingLeaves = $pendingResult->fetch_all(MYSQLI_ASSOC);
+        $stmt = $conn->prepare($pendingQuery);
+        $stmt->bind_param("s", $selectedYear);
+        $stmt->execute();
+        $pendingLeaves = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-        // Get approved leaves
+        // Get approved leaves filtered by financial year
         $approvedQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, lt.name as leave_type_name
                           FROM leave_applications la
                           JOIN employees e ON la.employee_id = e.id
                           JOIN leave_types lt ON la.leave_type_id = lt.id
+                          LEFT JOIN leave_balances lb ON e.id = lb.employee_id AND lb.financial_year = ?
                           WHERE la.status = 'approved'
                           ORDER BY la.applied_at DESC
                           LIMIT 20";
-        $approvedResult = $conn->query($approvedQuery);
-        $approvedLeaves = $approvedResult->fetch_all(MYSQLI_ASSOC);
+        $stmt = $conn->prepare($approvedQuery);
+        $stmt->bind_param("s", $selectedYear);
+        $stmt->execute();
+        $approvedLeaves = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-        // Get rejected leaves
+        // Get rejected leaves filtered by financial year
         $rejectedQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, lt.name as leave_type_name
                           FROM leave_applications la
                           JOIN employees e ON la.employee_id = e.id
                           JOIN leave_types lt ON la.leave_type_id = lt.id
+                          LEFT JOIN leave_balances lb ON e.id = lb.employee_id AND lb.financial_year = ?
                           WHERE la.status = 'rejected'
                           ORDER BY la.applied_at DESC
                           LIMIT 20";
-        $rejectedResult = $conn->query($rejectedQuery);
-        $rejectedLeaves = $rejectedResult->fetch_all(MYSQLI_ASSOC);
+        $stmt = $conn->prepare($rejectedQuery);
+        $stmt->bind_param("s", $selectedYear);
+        $stmt->execute();
+        $rejectedLeaves = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     }
 
     if ($tab === 'history' && hasPermission('hr_manager')) {
-        // Get current leaves
+        // Get current leaves filtered by financial year
         $currentQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, lt.name as leave_type_name
                          FROM leave_applications la
                          JOIN employees e ON la.employee_id = e.id
                          JOIN leave_types lt ON la.leave_type_id = lt.id
+                         LEFT JOIN leave_balances lb ON e.id = lb.employee_id AND lb.financial_year = ?
                          WHERE la.start_date <= CURDATE() AND la.end_date >= CURDATE() AND la.status = 'approved'
                          ORDER BY la.start_date";
-        $currentResult = $conn->query($currentQuery);
-        $currentLeaves = $currentResult->fetch_all(MYSQLI_ASSOC);
+        $stmt = $conn->prepare($currentQuery);
+        $stmt->bind_param("s", $selectedYear);
+        $stmt->execute();
+        $currentLeaves = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-        // Get all leaves
+        // Get all leaves filtered by financial year
         $allQuery = "SELECT la.*, e.employee_id, e.first_name, e.last_name, lt.name as leave_type_name
                      FROM leave_applications la
                      JOIN employees e ON la.employee_id = e.id
                      JOIN leave_types lt ON la.leave_type_id = lt.id
+                     LEFT JOIN leave_balances lb ON e.id = lb.employee_id AND lb.financial_year = ?
                      ORDER BY la.applied_at DESC
                      LIMIT 50";
-        $allResult = $conn->query($allQuery);
-        $allLeaves = $allResult->fetch_all(MYSQLI_ASSOC);
+        $stmt = $conn->prepare($allQuery);
+        $stmt->bind_param("s", $selectedYear);
+        $stmt->execute();
+        $allLeaves = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     }
 
     if ($tab === 'profile') {
@@ -445,10 +466,10 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
         if ($userEmployee) {
             $employee = $userEmployee;
 
-            // Get leave balance
-            $balanceQuery = "SELECT * FROM leave_balances WHERE employee_id = ? ORDER BY leave_type_id";
+            // Get leave balance for selected financial year
+            $balanceQuery = "SELECT * FROM leave_balances WHERE employee_id = ? AND financial_year = ? ORDER BY leave_type_id";
             $stmt = $conn->prepare($balanceQuery);
-            $stmt->bind_param("i", $employee['id']);
+            $stmt->bind_param("is", $employee['id'], $selectedYear);
             $stmt->execute();
             $balanceResult = $stmt->get_result();
             $leaveBalance = $balanceResult->fetch_assoc();
@@ -749,6 +770,22 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                 <!-- Manage Leave Tab -->
                 <div class="tab-content">
                     <h3>Manage Leave Applications</h3>
+                    
+                    <!-- Financial Year Filter -->
+                    <div class="filter-section" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                        <strong>Filter by Financial Year:</strong>
+                        <form method="GET" style="display: inline-block; margin-left: 10px;">
+                            <input type="hidden" name="tab" value="manage">
+                            <select name="year" onchange="this.form.submit()" class="form-control" style="display: inline-block; width: 150px;">
+                                <?php foreach ($availableYears as $year): ?>
+                                    <option value="<?php echo $year; ?>" <?php echo ($year === $selectedYear) ? 'selected' : ''; ?>>
+                                        <?php echo $year; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </form>
+                        <span style="margin-left: 15px;">Viewing: <strong><?php echo $selectedYear; ?></strong></span>
+                    </div>
 
                     <!-- Pending Leaves -->
                     <div class="table-container mb-4">
@@ -871,6 +908,22 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                 <!-- Leave History Tab -->
                 <div class="tab-content">
                     <h3>Leave History</h3>
+                    
+                    <!-- Financial Year Filter -->
+                    <div class="filter-section" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                        <strong>Filter by Financial Year:</strong>
+                        <form method="GET" style="display: inline-block; margin-left: 10px;">
+                            <input type="hidden" name="tab" value="history">
+                            <select name="year" onchange="this.form.submit()" class="form-control" style="display: inline-block; width: 150px;">
+                                <?php foreach ($availableYears as $year): ?>
+                                    <option value="<?php echo $year; ?>" <?php echo ($year === $selectedYear) ? 'selected' : ''; ?>>
+                                        <?php echo $year; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </form>
+                        <span style="margin-left: 15px;">Viewing: <strong><?php echo $selectedYear; ?></strong></span>
+                    </div>
 
                     <!-- Employees Currently on Leave -->
                     <div class="table-container mb-4">
@@ -1034,6 +1087,22 @@ if (in_array($user['role'], ['hr_manager', 'dept_head', 'section_head'])) {
                 <!-- My Leave Profile Tab -->
                 <div class="tab-content">
                     <h3>My Leave Profile</h3>
+                    
+                    <!-- Financial Year Filter -->
+                    <div class="filter-section" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                        <strong>Financial Year:</strong>
+                        <form method="GET" style="display: inline-block; margin-left: 10px;">
+                            <input type="hidden" name="tab" value="profile">
+                            <select name="year" onchange="this.form.submit()" class="form-control" style="display: inline-block; width: 150px;">
+                                <?php foreach ($availableYears as $year): ?>
+                                    <option value="<?php echo $year; ?>" <?php echo ($year === $selectedYear) ? 'selected' : ''; ?>>
+                                        <?php echo $year; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </form>
+                        <span style="margin-left: 15px;">Viewing: <strong><?php echo $selectedYear; ?></strong></span>
+                    </div>
 
                     <?php if ($employee): ?>
                     <!-- Employee Information -->
